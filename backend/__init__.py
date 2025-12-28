@@ -1,0 +1,1 @@
+"""ScyllaDB RAG Demo Backend"""

@@ -1,0 +1,10 @@
+
+    The Quantum Computing Lab at MIT has three main research areas:
+    1. Quantum error correction using surface codes
+    2. Topological quantum computing with anyons
+    3. Quantum machine learning algorithms
+    
+    Dr. Sarah Chen leads the quantum error correction team.
+    The lab was founded in 2018 and has 15 researchers.
+    Their latest paper on quantum supremacy was published in Nature 2024.
+    

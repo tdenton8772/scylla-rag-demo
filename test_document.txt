@@ -1,0 +1,1 @@
+ScyllaDB is a high-performance NoSQL database compatible with Apache Cassandra. It provides vector search capabilities for building RAG applications. The hybrid memory architecture uses both short-term and long-term memory for context.

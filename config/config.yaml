@@ -1,0 +1,221 @@
+# ScyllaDB RAG Demo Configuration
+# =================================
+
+# Memory Configuration
+memory:
+  short_term:
+    max_messages: 5              # Number of recent messages to keep in context
+    ttl_seconds: 3600            # 1 hour TTL for conversation_sessions table
+    query_timeout_ms: 100        # Timeout for short-term queries
+  
+  long_term:
+    top_k: 4                     # Number of vector search results to return
+    similarity_threshold: 0.7    # Minimum COSINE similarity (0.0 - 1.0)
+    enable_cross_session: true   # Allow searching across all sessions
+    query_timeout_ms: 500        # Timeout for vector search queries
+    filter_echo_threshold: 0.95  # Filter out hits too similar to current input
+    ann_search_limit_multiplier: 20  # Fetch top_k * multiplier before filtering (to account for session filtering)
+
+# Chunking Configuration
+chunking:
+  strategy: "sentence"           # Options: "sentence", "phrase", "fixed"
+  chunk_size: 512                # Target tokens per chunk
+  chunk_overlap: 50              # Overlap between chunks in tokens
+  min_chunk_size: 100            # Minimum chunk size
+  max_chunk_size: 1000           # Maximum chunk size
+  
+  # Sentence parser settings
+  sentence:
+    language: "en"
+    link_sentences: 2            # Number of sentences to link together
+  
+  # Phrase parser settings  
+  phrase:
+    delimiter: ","               # Phrase delimiter
+    link_phrases: 3              # Number of phrases to link
+
+# Embeddings Configuration
+embeddings:
+  provider: "ollama"             # Options: "ollama", "openai"
+  model: "all-minilm:l6-v2"      # Ollama model name
+  dimensions: 384                # Vector dimensions (must match model)
+  base_url: "http://localhost:11434"
+  batch_size: 32                 # Batch size for embedding generation
+  timeout_seconds: 30
+  
+  # Alternative: OpenAI embeddings
+  # provider: "openai"
+  # model: "text-embedding-3-small"
+  # dimensions: 1536
+
+# LLM Configuration
+llm:
+  provider: "ollama"             # Options: "ollama", "openai", "anthropic"
+  model: "llama2"                # Model name
+  base_url: "http://localhost:11434"
+  temperature: 0.3
+  max_tokens: 128
+  timeout_seconds: 30
+  stream: true                   # Enable streaming responses
+  
+  # System prompt injection
+  inject_rules: true             # Inject agent rules into system prompt
+  rules_file: "config/agent_rules.md"
+
+# ScyllaDB Configuration
+scylladb:
+  # Connection loaded from .env file:
+  # - SCYLLA_HOSTS
+  # - SCYLLA_PORT
+  # - SCYLLA_USERNAME
+  # - SCYLLA_PASSWORD
+  # - SCYLLA_KEYSPACE
+  
+  connection_pool:
+    size: 10                     # Connection pool size
+    timeout_ms: 5000             # Connection timeout
+    retry_attempts: 3
+  
+  consistency:
+    read: "LOCAL_QUORUM"         # Read consistency level
+    write: "LOCAL_QUORUM"        # Write consistency level
+  
+  tables:
+    conversation_sessions:
+      ttl: 3600                  # 1 hour TTL
+      gc_grace_seconds: 86400    # 1 day grace period
+    
+    documents:
+      ttl: 0                     # No TTL (persistent)
+      compaction_strategy: "SizeTieredCompactionStrategy"
+    
+    document_metadata:
+      ttl: 0                     # No TTL (persistent)
+
+# Vector Index Configuration
+vector_index:
+  similarity_function: "COSINE"  # Options: COSINE, DOT_PRODUCT, EUCLIDEAN
+  options:
+    m: 16                        # Maximum node connections
+    ef_construction: 100         # Construction time quality
+    ef_search: 100               # Search time quality
+
+# API Configuration
+api:
+  host: "0.0.0.0"
+  port: 8000
+  cors_origins:
+    - "http://localhost:4000"    # Phoenix frontend
+    - "http://localhost:3000"    # Alternative frontend
+  
+  rate_limiting:
+    enabled: true
+    requests_per_minute: 60
+    burst_size: 10
+  
+  upload:
+    max_file_size_mb: 50
+    allowed_extensions:
+      - ".pdf"
+      - ".txt"
+      - ".md"
+      - ".docx"
+    temp_storage: "/tmp/rag_uploads"
+
+# Phoenix Frontend Configuration
+phoenix:
+  url:
+    host: "localhost"
+    port: 4000
+  
+  live_view:
+    signing_salt: "CHANGE_ME_IN_PRODUCTION"
+  
+  websocket:
+    timeout: 60000               # 60 seconds
+    heartbeat_interval: 30000    # 30 seconds
+
+# Logging Configuration
+logging:
+  level: "INFO"                  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  format: "json"                 # json or text
+  output: "stdout"               # stdout, file, or both
+  
+  log_queries: false             # Log all ScyllaDB queries (debug only)
+  log_embeddings: false          # Log embedding generation (debug only)
+  log_context: true              # Log assembled context for LLM
+
+# Monitoring & Metrics
+monitoring:
+  enabled: true
+  prometheus_port: 9090
+  
+  metrics:
+    - "query_latency"
+    - "embedding_generation_time"
+    - "vector_search_duration"
+    - "llm_response_time"
+    - "active_sessions"
+    - "documents_indexed"
+
+# Development Settings
+development:
+  debug_mode: true
+  hot_reload: true
+  print_context: false           # Print full LLM context (very verbose)
+  seed_data: true                # Load seed data on startup
+  
+  # Mock services for testing
+  mock_llm: false
+  mock_embeddings: false
+  mock_scylladb: false
+
+# Production Settings
+production:
+  debug_mode: false
+  hot_reload: false
+  ssl_enabled: true
+  
+  # Security
+  require_authentication: true
+  session_encryption: true
+  
+  # Performance
+  enable_caching: true
+  cache_ttl_seconds: 300
+
+# Feature Flags
+features:
+  cross_session_search: true     # Allow searching across sessions
+  document_upload: true           # Enable document upload
+  conversation_export: true       # Allow exporting conversations
+  admin_panel: false              # Enable admin interface
+  
+# Demo Settings
+demo:
+  show_sources: true              # Display source attributions
+  show_similarity_scores: true    # Show vector similarity scores
+  show_memory_indicators: true    # Indicate short vs long-term memory
+  enable_slash_commands: true     # /clear, /history, /upload, etc.
+
+# Agent Behavior (see config/agent_rules.md for details)
+agent:
+  name: "RAG Assistant"
+  persona: "professional_helpful"
+  
+  # Response constraints
+  max_response_length: 500       # Words
+  require_citations: true
+  allow_speculation: false
+  
+  # Context handling
+  prioritize_recency: true        # For ambiguous references
+  acknowledge_gaps: true          # Explicitly state missing information
+  suggest_followups: true         # Offer related questions
+
+# Experimental Features
+experimental:
+  adaptive_chunking: false        # Dynamic chunk sizing based on content
+  semantic_caching: false         # Cache similar queries
+  multi_modal: false              # Support images (future)
+  conversation_summarization: false  # Periodic conversation summaries
