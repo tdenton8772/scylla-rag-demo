@@ -63,55 +63,142 @@ Query Embedding
 ## 🚀 Quick Start
 
 ### Prerequisites
+
+#### MacOS
 ```bash
-# Install Ollama on MacOS
-brew install ollama  # macOS
+# Install Ollama
+brew install ollama
 
-# Install Ollama on Linux
-curl -fsSL https://ollama.com/install.sh | sh # for linux
-# or visit https://ollama.ai
+# Start Ollama service
+brew services start ollama
 
-# Pull embedding model
+# Verify Ollama is running
+ollama --version  # Should show 0.5.x or higher, NOT 0.0.0
+curl http://localhost:11434/api/tags  # Should return JSON
+
+# Pull embedding model (required)
+ollama pull nomic-embed-text  # 768-dimension embeddings
+
+# Install Elixir
+brew install elixir
+
+# Install Python 3.11+
+brew install python@3.11
+
+# Create Python virtual environment
+python3.11 -m venv venv
+source venv/bin/activate
+```
+
+#### Linux (Fedora/RHEL)
+```bash
+# Install Ollama
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Start Ollama service
+sudo systemctl start ollama
+sudo systemctl enable ollama
+
+# Verify Ollama is running
+ollama --version  # Should show 0.5.x or higher, NOT 0.0.0
+curl http://localhost:11434/api/tags  # Should return JSON
+
+# Pull embedding model (required)
 ollama pull nomic-embed-text
 
-# Pull LLM (optional, can use OpenAI instead)
-ollama pull llama2
-
-# For Linux - package dependencies:
+# Install dependencies
 sudo dnf install python3.11 elixir inotify-tools
-sudo apt-get isntall python3.11 elixir inotify-tools 
 
-# For Linux - Setup python 3.11:
-python3.11 -m venv venv-3.11
-source venv-3.1/bin/activate
+# Create Python virtual environment
+python3.11 -m venv venv
+source venv/bin/activate
+```
+
+#### Linux (Debian/Ubuntu)
+```bash
+# Install Ollama
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Start Ollama service
+sudo systemctl start ollama
+sudo systemctl enable ollama
+
+# Verify Ollama is running
+ollama --version
+curl http://localhost:11434/api/tags
+
+# Pull embedding model (required)
+ollama pull nomic-embed-text
+
+# Install dependencies
+sudo apt-get update
+sudo apt-get install python3.11 elixir inotify-tools
+
+# Create Python virtual environment
+python3.11 -m venv venv
+source venv/bin/activate
 ```
 
 ### Setup
 ```bash
 # Clone and navigate
-git clone <repo>
+git clone https://github.com/tdenton8772/scylla-rag-demo.git
 cd scylla-rag-demo
 
 # Configure environment
 cp .env.example .env
-# Edit .env with your ScyllaDB credentials
+# IMPORTANT: Edit .env with required credentials:
+#
+# ScyllaDB Cloud:
+#   - SCYLLADB_HOSTS (comma-separated node list)
+#   - SCYLLADB_PORT (19042 for Cloud)
+#   - SCYLLADB_USERNAME
+#   - SCYLLADB_PASSWORD
+#
+# LLM Provider (choose one):
+#   Option 1 - OpenAI:
+#     - LLM_PROVIDER=openai
+#     - OPENAI_API_KEY=your_key
+#     - OPENAI_MODEL=gpt-4o-mini
+#   Option 2 - Grok (x.ai):
+#     - LLM_PROVIDER=openai
+#     - OPENAI_API_KEY=your_xai_key
+#     - OPENAI_BASE_URL=https://api.x.ai/v1
+#     - OPENAI_MODEL=grok-beta
+#
+# Embeddings (uses local Ollama):
+#   - EMBEDDINGS_PROVIDER=ollama
+#   - EMBEDDINGS_MODEL=nomic-embed-text
+
+# Activate Python virtual environment (if created in Prerequisites)
+source venv/bin/activate
 
 # Install backend dependencies
-cd backend
-pip install -r requirements.txt
-cd ../
+pip install -r backend/requirements.txt
 
 # Initialize ScyllaDB schema
 python scylladb_setup/create_schema.py
 
-# Start backend
-uvicorn api.main:app --reload --port 8000 &
+# Validate the backend is working
+cd /path/to/scylla-rag-demo
+python -m uvicorn backend.api.main:app --host 0.0.0.0 --port 8000 &
 
-# In another terminal, start Phoenix frontend
-cd frontend
+# Terminal 2 - Frontend:
+cd /path/to/scylla-rag-demo/frontend
 mix deps.get
-mix setup 
-iex -S mix phx.server  # Visit http://localhost:4000
+mix compile
+iex -S mix phx.server
+
+# Visit http://localhost:4000
+
+# How to start Normally
+# Will need to update path in this start.sh
+./start.sh  # Starts both backend and frontend
+```
+
+### Stopping Services
+```bash
+./stop.sh  # Stops all services
 ```
 
 ### First Conversation
