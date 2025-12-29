@@ -64,8 +64,11 @@ Query Embedding
 
 ### Prerequisites
 ```bash
-# Install Ollama
+# Install Ollama on MacOS
 brew install ollama  # macOS
+
+# Install Ollama on Linux
+curl -fsSL https://ollama.com/install.sh | sh # for linux
 # or visit https://ollama.ai
 
 # Pull embedding model
@@ -73,6 +76,14 @@ ollama pull nomic-embed-text
 
 # Pull LLM (optional, can use OpenAI instead)
 ollama pull llama2
+
+# For Linux - package dependencies:
+sudo dnf install python3.11 elixir inotify-tools
+sudo apt-get isntall python3.11 elixir inotify-tools 
+
+# For Linux - Setup python 3.11:
+python3.11 -m venv venv-3.11
+source venv-3.1/bin/activate
 ```
 
 ### Setup
@@ -88,17 +99,18 @@ cp .env.example .env
 # Install backend dependencies
 cd backend
 pip install -r requirements.txt
+cd ../
 
 # Initialize ScyllaDB schema
 python scylladb_setup/create_schema.py
 
 # Start backend
-uvicorn api.main:app --reload --port 8000
+uvicorn api.main:app --reload --port 8000 &
 
 # In another terminal, start Phoenix frontend
 cd frontend
 mix deps.get
-mix ecto.setup  # if using Ecto
+mix setup 
 iex -S mix phx.server  # Visit http://localhost:4000
 ```
 
