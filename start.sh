@@ -27,24 +27,59 @@ echo ""
 # Function to check if a process is running
 is_running() {
     local pid_file=$1
+    local port=$2
+    local pattern=$3
+    
+    # Check PID file
     if [ -f "$pid_file" ]; then
         local pid=$(cat "$pid_file")
         if ps -p "$pid" > /dev/null 2>&1; then
             return 0
+        else
+            # Clean up stale PID file
+            rm -f "$pid_file" 2>/dev/null
         fi
     fi
+    
+    # Check by port
+    if [ -n "$port" ]; then
+        if lsof -ti:$port > /dev/null 2>&1; then
+            return 0
+        fi
+    fi
+    
+    # Check by process pattern
+    if [ -n "$pattern" ]; then
+        if pgrep -f "$pattern" > /dev/null 2>&1; then
+            return 0
+        fi
+    fi
+    
     return 1
 }
 
 # Function to start a service
 start_service() {
     local name=$1
+    local command=$2
+    local port=$3
+    local pattern=$4
     local pid_file="$PID_DIR/$name.pid"
     local log_file="$LOG_DIR/$name.log"
-    local command=$2
     
-    if is_running "$pid_file"; then
+    if is_running "$pid_file" "$port" "$pattern"; then
         echo -e "${YELLOW}⚠ $name is already running${NC}"
+        # If process is running but no PID file, try to create one
+        if [ ! -f "$pid_file" ]; then
+            if [ -n "$port" ]; then
+                local existing_pid=$(lsof -ti:$port 2>/dev/null | head -1)
+                if [ -n "$existing_pid" ]; then
+                    echo "  Found existing process (PID: $existing_pid), saving to PID file"
+                    echo $existing_pid > "$pid_file"
+                fi
+            fi
+        fi
+        echo ""
         return
     fi
     
@@ -57,7 +92,7 @@ start_service() {
     
     sleep 2
     
-    if is_running "$pid_file"; then
+    if is_running "$pid_file" "$port" "$pattern"; then
         echo -e "${GREEN}✓ $name started successfully${NC}"
     else
         echo -e "${RED}✗ $name failed to start${NC}"
@@ -68,11 +103,19 @@ start_service() {
 
 # 1. Check Ollama
 echo -e "${GREEN}▶ Checking Ollama...${NC}"
-if ! pgrep -x "ollama" > /dev/null; then
+if ! is_running "$PID_DIR/ollama.pid" "11434" "ollama serve"; then
     echo "  Starting Ollama service..."
-    start_service "ollama" "ollama serve"
+    start_service "ollama" "ollama serve" "11434" "ollama serve"
 else
     echo -e "${GREEN}✓ Ollama is already running${NC}"
+    # Save PID if not already saved
+    if [ ! -f "$PID_DIR/ollama.pid" ]; then
+        existing_pid=$(lsof -ti:11434 2>/dev/null | head -1)
+        if [ -n "$existing_pid" ]; then
+            echo "  Saving existing Ollama PID: $existing_pid"
+            echo $existing_pid > "$PID_DIR/ollama.pid"
+        fi
+    fi
     echo ""
 fi
 
@@ -93,14 +136,9 @@ echo ""
 
 # 2. Check Ollama models
 echo -e "${GREEN}▶ Checking Ollama models...${NC}"
-if ! ollama list | grep -q "all-minilm:l6-v2"; then
-    echo "  Pulling all-minilm:l6-v2..."
-    ollama pull all-minilm:l6-v2 >> "$LOG_DIR/ollama-pull.log" 2>&1
-fi
-
-if ! ollama list | grep -q "llama2"; then
-    echo "  Pulling llama2..."
-    ollama pull llama2 >> "$LOG_DIR/ollama-pull.log" 2>&1
+if ! ollama list | grep -q "nomic-embed-text"; then
+    echo "  Pulling nomic-embed-text..."
+    ollama pull nomic-embed-text >> "$LOG_DIR/ollama-pull.log" 2>&1
 fi
 echo -e "${GREEN}✓ Models ready${NC}"
 echo ""
@@ -116,7 +154,7 @@ echo ""
 
 # 4. Start FastAPI backend
 cd "$PROJECT_DIR"
-start_service "fastapi" "python3 -B -m uvicorn backend.api.main:app --host 0.0.0.0 --port 8000"
+start_service "fastapi" "python3 -B -m uvicorn backend.api.main:app --host 0.0.0.0 --port 8000" "8000" "uvicorn backend.api.main"
 
 # 5. Wait for backend to be ready
 echo "Waiting for backend to be ready..."
@@ -136,7 +174,7 @@ echo ""
 
 # 6. Start Phoenix frontend
 cd "$PROJECT_DIR/frontend"
-start_service "phoenix" "mix phx.server"
+start_service "phoenix" "mix phx.server" "4000" "mix phx.server"
 
 # 7. Wait for frontend to be ready
 echo "Waiting for frontend to be ready..."

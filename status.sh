@@ -22,28 +22,57 @@ echo ""
 check_service() {
     local name=$1
     local port=$2
+    local pattern=$3
+    local health_url=$4
     local pid_file="$PID_DIR/$name.pid"
     
     echo -n "$name: "
     
-    # Check PID file
+    local pid=""
+    local status="STOPPED"
+    
+    # 1. Check PID file
     if [ -f "$pid_file" ]; then
-        local pid=$(cat "$pid_file")
-        if ps -p "$pid" > /dev/null 2>&1; then
-            echo -ne "${GREEN}RUNNING${NC} (PID: $pid)"
-            
-            # Check if port is accessible
-            if [ -n "$port" ]; then
-                if curl -s "$port" > /dev/null 2>&1; then
-                    echo -e " ${GREEN}[HEALTHY]${NC}"
-                else
-                    echo -e " ${YELLOW}[NOT RESPONDING]${NC}"
-                fi
+        local file_pid=$(cat "$pid_file")
+        if ps -p "$file_pid" > /dev/null 2>&1; then
+            pid=$file_pid
+            status="RUNNING"
+        else
+            rm -f "$pid_file" 2>/dev/null
+        fi
+    fi
+    
+    # 2. Check by port
+    if [ -z "$pid" ] && [ -n "$port" ]; then
+        local port_pid=$(lsof -ti:$port 2>/dev/null | head -1)
+        if [ -n "$port_pid" ]; then
+            pid=$port_pid
+            status="RUNNING (no PID file)"
+        fi
+    fi
+    
+    # 3. Check by process pattern
+    if [ -z "$pid" ] && [ -n "$pattern" ]; then
+        local pattern_pid=$(pgrep -f "$pattern" 2>/dev/null | head -1)
+        if [ -n "$pattern_pid" ]; then
+            pid=$pattern_pid
+            status="RUNNING (no PID file)"
+        fi
+    fi
+    
+    # Display status
+    if [ -n "$pid" ]; then
+        echo -ne "${GREEN}$status${NC} (PID: $pid)"
+        
+        # Check health endpoint if provided
+        if [ -n "$health_url" ]; then
+            if curl -s "$health_url" > /dev/null 2>&1; then
+                echo -e " ${GREEN}[HEALTHY]${NC}"
             else
-                echo ""
+                echo -e " ${YELLOW}[NOT RESPONDING]${NC}"
             fi
         else
-            echo -e "${RED}STOPPED${NC} (stale PID file)"
+            echo ""
         fi
     else
         echo -e "${RED}STOPPED${NC}"
@@ -51,8 +80,9 @@ check_service() {
 }
 
 # Check each service
-check_service "ollama" "http://localhost:11434/api/tags"
-check_service "fastapi" "http://localhost:8000/health"
+check_service "ollama" "11434" "ollama serve" "http://localhost:11434/api/tags"
+check_service "fastapi" "8000" "uvicorn backend.api.main" "http://localhost:8000/health"
+check_service "phoenix" "4000" "mix phx.server" "http://localhost:4000"
 
 echo ""
 echo "================================================================"
