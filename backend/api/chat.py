@@ -216,9 +216,14 @@ async def chat_message(request: ChatRequest, debug: bool = Query(False, descript
         # Generate response
         response_text = llm_service.generate_response(final_messages, stream=False)
         
-        # Persist messages AFTER we have the response, in correct order
-        memory_service.store_message(request.session_id, "user", request.message)
-        memory_service.store_message(request.session_id, "assistant", response_text)
+        # Check if response is low quality before storing
+        # If assistant response is unhelpful, skip storing BOTH user and assistant messages
+        if not memory_service._is_low_quality_response(response_text, "assistant"):
+            # Persist messages AFTER we have the response, in correct order
+            memory_service.store_message(request.session_id, "user", request.message)
+            memory_service.store_message(request.session_id, "assistant", response_text)
+        else:
+            logger.info(f"Skipping storage of low-quality exchange (user question + unhelpful response)")
         
         debug_payload = None
         if debug:

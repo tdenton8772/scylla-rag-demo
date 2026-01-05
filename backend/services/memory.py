@@ -35,10 +35,48 @@ class HybridMemoryService:
         
         logger.info(f"Hybrid Memory: short-term={self.short_term_limit}, long-term top_k={self.long_term_top_k}")
     
+    def _is_low_quality_response(self, content: str, role: str) -> bool:
+        """
+        Detect low-quality responses that shouldn't be stored in long-term memory.
+        
+        Returns True if the content is unhelpful and should be filtered out.
+        """
+        if role != "assistant":
+            return False
+        
+        content_lower = content.lower()
+        
+        # Patterns indicating the assistant doesn't have information
+        no_info_patterns = [
+            r"i don't have (information|details|data|knowledge)",
+            r"i don't know",
+            r"i cannot (find|provide|access)",
+            r"i'm not able to",
+            r"i don't see",
+            r"there('s| is) no (information|data|mention)",
+            r"the (context|information provided) (doesn't|does not) (contain|include|mention)",
+            r"not (found|available|present) in (the )?(context|information)",
+        ]
+        
+        for pattern in no_info_patterns:
+            if re.search(pattern, content_lower):
+                logger.info(f"Filtering low-quality response from long-term memory: '{content[:60]}...'")
+                return True
+        
+        # Filter out very short responses (likely unhelpful)
+        if len(content.strip()) < 20:
+            logger.info(f"Filtering short response from long-term memory: '{content}'")
+            return True
+        
+        return False
+    
     def store_message(self, session_id: str, role: str, content: str, context_docs: List[str] = None):
         """
         Store a message in short-term memory (conversation_sessions)
         Also store in long-term memory (documents) with embedding
+        
+        Note: Quality filtering should be done at the chat endpoint level
+        to filter both user question and assistant response together.
         """
         # Store in short-term memory
         try:
@@ -60,6 +98,7 @@ class HybridMemoryService:
             raise
         
         # Store in long-term conversation memory (separate table)
+        
         try:
             embedding = self.embeddings_service.generate_embedding(content)
             insert_long_term = (
@@ -202,6 +241,7 @@ class HybridMemoryService:
                 result_list = list(self.scylla_client.execute(query))
             
             threshold = config.doc_similarity_threshold
+            logger.info(f"Document search threshold: {threshold} ({threshold*100:.1f}%)")
             keep = []
             for row in result_list:
                 emb = row.get('embedding')
@@ -209,6 +249,7 @@ class HybridMemoryService:
                     continue
                 
                 sim = float(np.dot(np.array(query_embedding), np.array(emb)) / (np.linalg.norm(query_embedding) * np.linalg.norm(emb)))
+                logger.debug(f"Document similarity: {sim:.3f} ({sim*100:.1f}%), threshold: {threshold:.3f}")
                 if sim >= threshold:
                     doc_id = row.get('doc_id') if isinstance(row, dict) else row.doc_id
                     chunk_id = row.get('chunk_id') if isinstance(row, dict) else row.chunk_id
@@ -260,6 +301,7 @@ class HybridMemoryService:
                 result_list = list(self.scylla_client.execute(query, (UUID(session_id),)))
             
             threshold = self.long_term_similarity_threshold
+            logger.info(f"Long-term search threshold: {threshold} ({threshold*100:.1f}%)")
             for row in result_list:
                 # Filter to current session only
                 sid = str(row.get('session_id')) if isinstance(row, dict) else str(row.session_id)
@@ -269,6 +311,7 @@ class HybridMemoryService:
                 if not emb:
                     continue
                 sim = float(np.dot(np.array(query_embedding), np.array(emb)) / (np.linalg.norm(query_embedding) * np.linalg.norm(emb)))
+                logger.debug(f"Long-term similarity: {sim:.3f} ({sim*100:.1f}%), threshold: {threshold:.3f}")
                 if sim >= threshold:
                     md = row.get('metadata', {}) if isinstance(row, dict) else getattr(row, 'metadata', {})
                     items.append({
@@ -363,8 +406,10 @@ class HybridMemoryService:
             # Add docs up to doc_top_k, but re-check similarity threshold
             for c in candidates:
                 if c['source_type'] == 'uploaded_document' and uploaded_doc_count < max_docs:
+                    sim = c.get('similarity', 0)
                     # Re-check similarity threshold after reranking
-                    if c.get('similarity', 0) >= config.doc_similarity_threshold:
+                    if sim >= config.doc_similarity_threshold:
+                        logger.info(f"✓ Including document: similarity={sim:.3f} ({sim*100:.1f}%) >= threshold {config.doc_similarity_threshold}")
                         matches.append({
                             "content": c['content'],
                             "source_type": c['source_type'],
@@ -373,11 +418,15 @@ class HybridMemoryService:
                             "similarity": c.get('similarity', 0)  # Preserve for debugging
                         })
                         uploaded_doc_count += 1
+                    else:
+                        logger.info(f"✗ Filtering document: similarity={sim:.3f} ({sim*100:.1f}%) < threshold {config.doc_similarity_threshold}")
             # Add long-term up to long_top_k, but re-check similarity threshold
             for c in candidates:
                 if c['source_type'] == 'conversation' and conversation_count < max_long:
+                    sim = c.get('similarity', 0)
                     # Re-check similarity threshold after reranking
-                    if c.get('similarity', 0) >= config.long_term_similarity_threshold:
+                    if sim >= config.long_term_similarity_threshold:
+                        logger.info(f"✓ Including conversation: similarity={sim:.3f} ({sim*100:.1f}%) >= threshold {config.long_term_similarity_threshold}")
                         matches.append({
                             "content": c['content'],
                             "source_type": c['source_type'],
@@ -386,6 +435,8 @@ class HybridMemoryService:
                             "similarity": c.get('similarity', 0)  # Preserve for debugging
                         })
                         conversation_count += 1
+                    else:
+                        logger.info(f"✗ Filtering conversation: similarity={sim:.3f} ({sim*100:.1f}%) < threshold {config.long_term_similarity_threshold}")
             
             # Log the mix for debugging
             logger.info(f"Reranked results: {uploaded_doc_count} uploaded_document, {conversation_count} conversation (per-source caps docs={max_docs}, long={max_long})")
@@ -418,8 +469,26 @@ class HybridMemoryService:
         long_term = self.get_long_term_memory(user_message, session_id)
         long_ms = (time.time()-t_long)*1000
         
-        # Add long-term context as system messages immediately before user turn
+        # 3. Deduplicate: filter out long-term conversation memories already in short-term
+        # Build set of short-term content for fast lookup
+        short_term_content = {msg['content'].strip() for msg in short_term if 'content' in msg}
+        
+        deduplicated_long_term = []
+        duplicates_removed = 0
         for match in long_term:
+            # Only deduplicate conversation memories, keep all uploaded documents
+            if match['source_type'] == 'conversation':
+                if match['content'].strip() in short_term_content:
+                    duplicates_removed += 1
+                    logger.debug(f"Deduplicating: '{match['content'][:60]}...' already in short-term")
+                    continue
+            deduplicated_long_term.append(match)
+        
+        if duplicates_removed > 0:
+            logger.info(f"Deduplicated {duplicates_removed} conversation memories already in short-term context")
+        
+        # Add deduplicated long-term context as system messages immediately before user turn
+        for match in deduplicated_long_term:
             context.append({
                 "role": "system",
                 "content": f"[Context from {match['source_type']}]: {match['content']}",
@@ -440,19 +509,19 @@ class HybridMemoryService:
                 "content": "Instructions: Answer using information from the conversation history above. If you cannot answer from the conversation, say 'I don't have information about that.' Keep answers to 2-3 sentences."
             })
         
-        logger.debug(f"Context assembly: short={len(short_term)} ({short_ms:.1f}ms), long={len(long_term)} ({long_ms:.1f}ms)")
+        logger.debug(f"Context assembly: short={len(short_term)} ({short_ms:.1f}ms), long={len(long_term)} raw ({long_ms:.1f}ms), {len(deduplicated_long_term)} after dedup")
         
         # Determine context type
-        if short_term and long_term:
+        if short_term and deduplicated_long_term:
             context_type = "hybrid"
         elif short_term:
             context_type = "short-term"
-        elif long_term:
+        elif deduplicated_long_term:
             context_type = "long-term"
         else:
             context_type = "none"
         
-        logger.info(f"Assembled {context_type} context: {len(short_term)} short-term + {len(long_term)} long-term")
+        logger.info(f"Assembled {context_type} context: {len(short_term)} short-term + {len(deduplicated_long_term)} long-term (deduplicated)")
         
         return context, context_type
     
